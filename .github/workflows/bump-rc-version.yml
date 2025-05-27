@@ -1,0 +1,65 @@
+name: Bump RC Version in Release Branch
+
+on:
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Define all versions
+        id: versions
+        shell: bash
+        # We only need `major.minor` in Readme so we cut the full version string to the first two tokens
+        run: |
+          echo "current_release_minor=$(cut -d "." -f 1,2 < VERSION.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: Bump rc version on release branch
+        shell: bash
+        env:
+          # We use the HAYSTACK_BOT_TOKEN here so the PR created by the step will
+          # trigger required workflows and can be merged by anyone
+          GITHUB_TOKEN: ${{ secrets.HAYSTACK_BOT_TOKEN }}
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Get the current release branch
+          RELEASE_BRANCH="v${{ steps.versions.outputs.current_release_minor }}.x"
+          git checkout $RELEASE_BRANCH
+
+          # Store the original version before updating
+          ORIGINAL_VERSION=$(cat VERSION.txt)
+
+          # Create a new branch for the version bump
+          BUMP_BRANCH="bump-rc-version-$(date +%s)"
+          git checkout -b $BUMP_BRANCH
+
+          # Update the rc version in VERSION.txt
+          if [[ $ORIGINAL_VERSION =~ rc[0-9]+$ ]]; then
+            # If version already has rc suffix, increment the rc number
+            NEW_VERSION=$(echo "$ORIGINAL_VERSION" | sed -E 's/rc([0-9]+)$/rc\1/' | awk -F'rc' '{print $1 "rc" ($2+1)}')
+          else
+            # raise an error
+            echo "Error: VERSION.txt does not contain a rc version"
+            exit 1
+          fi
+          echo "$NEW_VERSION" > VERSION.txt
+
+          # Commit and push the version bump
+          git add .
+          git commit -m "bump rc version to $NEW_VERSION"
+          git push -u origin $BUMP_BRANCH
+
+          # Create the PR to merge back into the release branch
+          gh pr create -B $RELEASE_BRANCH \
+            -H $BUMP_BRANCH \
+            --title "Bump rc version to $NEW_VERSION" \
+            --body "This PR bumps the rc version in VERSION.txt from $ORIGINAL_VERSION to $NEW_VERSION in the $RELEASE_BRANCH branch."
+
+
